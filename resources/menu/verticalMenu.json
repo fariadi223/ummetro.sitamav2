@@ -1,0 +1,67 @@
+{
+  "menu": [
+    {
+      "url": "admin/dashboard",
+      "name": "Dashboard",
+      "icon": "menu-icon tf-icons ti ti-smart-home",
+      "slug": "admin.dashboard",
+      "role": [
+        "admin"
+      ]
+    },
+    {
+      "url": "admin/alumni",
+      "name": "Data Alumni",
+      "icon": "menu-icon tf-icons ti ti-users-group",
+      "slug": "admin.alumni",
+      "role": [
+        "admin"
+      ]
+    },
+    {
+      "url": "admin/kuisoner",
+      "name": "Kelola Kuisoner",
+      "icon": "menu-icon tf-icons ti ti-list-details",
+      "slug": "admin.kuisoner",
+      "role": [
+        "admin"
+      ]
+    },
+    {
+      "url": "operator/dashboard",
+      "name": "Dashboard",
+      "icon": "menu-icon tf-icons ti ti-smart-home",
+      "slug": "operator.dashboard",
+      "role": [
+        "operator"
+      ]
+    },
+    {
+      "url": "operator/biaya",
+      "name": "Data Biaya",
+      "icon": "menu-icon tf-icons ti ti-receipt-2",
+      "slug": "operator.biaya.index",
+      "role": [
+        "operator"
+      ]
+    },
+    {
+      "url": "prodi/dashboard",
+      "name": "Dashboard",
+      "icon": "menu-icon tf-icons ti ti-smart-home",
+      "slug": "prodi.dashboard",
+      "role": [
+        "prodi"
+      ]
+    },
+    {
+      "url": "alumni/dashboard",
+      "name": "Dashboard",
+      "icon": "menu-icon tf-icons ti ti-smart-home",
+      "slug": "alumni.dashboard",
+      "role": [
+        "alumni"
+      ]
+    }
+  ]
+}
