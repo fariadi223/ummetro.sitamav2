@@ -10,30 +10,12 @@
       ]
     },
     {
-      "url": "admin/alumni",
-      "name": "Data Alumni",
-      "icon": "menu-icon tf-icons ti ti-users-group",
-      "slug": "admin.alumni",
-      "role": [
-        "admin"
-      ]
-    },
-    {
-      "url": "admin/kuisoner",
-      "name": "Kelola Kuisoner",
-      "icon": "menu-icon tf-icons ti ti-list-details",
-      "slug": "admin.kuisoner",
-      "role": [
-        "admin"
-      ]
-    },
-    {
       "url": "operator/dashboard",
       "name": "Dashboard",
       "icon": "menu-icon tf-icons ti ti-smart-home",
       "slug": "operator.dashboard",
       "role": [
-        "operator"
+        "adminpenerimaan"
       ]
     },
     {
@@ -46,21 +28,78 @@
       ]
     },
     {
-      "url": "prodi/dashboard",
-      "name": "Dashboard",
-      "icon": "menu-icon tf-icons ti ti-smart-home",
-      "slug": "prodi.dashboard",
+      "name": "Pembuatan Struk",
+      "icon": "menu-icon tf-icons ti ti-file-invoice",
+      "slug": "operator.tagihan",
       "role": [
-        "prodi"
+        "operator"
+      ],
+      "submenu": [
+        {
+          "url": "operator/tagihan",
+          "name": "Struk SPP",
+          "slug": "operator.tagihan.index"
+        },
+        {
+          "url": "operator/tagihan-pmb",
+          "name": "Struk Penmaru",
+          "slug": "operator.tagihan-pmb.index"
+        }
       ]
     },
     {
-      "url": "alumni/dashboard",
-      "name": "Dashboard",
-      "icon": "menu-icon tf-icons ti ti-smart-home",
-      "slug": "alumni.dashboard",
+      "name": "Penerimaan Struk",
+      "icon": "menu-icon tf-icons ti ti-cash-register",
+      "slug": "operator.penerimaan",
       "role": [
-        "alumni"
+        "operator"
+      ],
+      "submenu": [
+        {
+          "url": "operator/penerimaan-yudisium",
+          "name": "Penerimaan Yudisium",
+          "slug": "operator.penerimaan-yudisium.index"
+        }
+      ]
+    },
+    {
+      "name": "Payment Bank",
+      "icon": "menu-icon tf-icons ti ti-building-bank",
+      "slug": "operator.payment-bank",
+      "role": [
+        "operator"
+      ],
+      "submenu": [
+        {
+          "url": "operator/payment-bank/muamalat",
+          "name": "Bank Muamalat",
+          "slug": "operator.payment-bank.muamalat.index"
+        }
+      ]
+    },
+    {
+      "name": "Laporan",
+      "icon": "menu-icon tf-icons ti ti-report-analytics",
+      "slug": "operator.laporan",
+      "role": [
+        "operator"
+      ],
+      "submenu": [
+        {
+          "url": "operator/laporan/spp",
+          "name": "Laporan SPP",
+          "slug": "operator.laporan.spp.index"
+        },
+        {
+          "url": "operator/laporan/total-tagihan",
+          "name": "Total Tagihan",
+          "slug": "operator.laporan.total-tagihan.index"
+        },
+        {
+          "url": "operator/laporan/dispensasi",
+          "name": "Dispensasi",
+          "slug": "operator.laporan.dispensasi.index"
+        }
       ]
     }
   ]

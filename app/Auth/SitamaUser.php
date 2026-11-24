@@ -12,11 +12,12 @@ use Illuminate\Contracts\Auth\Authenticatable;
 class SitamaUser implements Authenticatable
 {
   /**
-   * Role endpoint => [role lokal (dipakai middleware role: & menu), route dasbor].
+   * Role endpoint => [daftar role lokal (dipakai middleware role: & menu), route dasbor].
+   * pustik juga mendapat role operator agar menu & aksesnya sama dengan adminpenerimaan.
    */
   public const PETA_ROLE = [
-    'pustik' => [Role::ADMIN, 'admin.dashboard'],
-    'adminpenerimaan' => [Role::OPERATOR, 'operator.dashboard'],
+    'pustik' => [[Role::ADMIN, Role::OPERATOR], 'admin.dashboard'],
+    'adminpenerimaan' => [[Role::OPERATOR], 'operator.dashboard'],
   ];
 
   public function __construct(private array $atribut)
@@ -70,7 +71,9 @@ class SitamaUser implements Authenticatable
    */
   public function roleLokal(): array
   {
-    return array_map(fn ($r) => self::PETA_ROLE[$r][0], $this->atribut['roles'] ?? []);
+    return array_values(array_unique(array_merge(
+      ...array_map(fn ($r) => self::PETA_ROLE[$r][0], $this->atribut['roles'] ?? [])
+    )));
   }
 
   /**
@@ -83,14 +86,23 @@ class SitamaUser implements Authenticatable
     return $role ? self::PETA_ROLE[$role][1] : null;
   }
 
+  /**
+   * Role lokal plus role endpoint asli (mis. 'adminpenerimaan'), agar menu
+   * & middleware bisa membatasi per role endpoint bila perlu.
+   */
+  private function semuaRole(): array
+  {
+    return array_merge($this->roleLokal(), $this->atribut['roles'] ?? []);
+  }
+
   public function hasRole($role): bool
   {
-    return in_array($role, $this->roleLokal(), true);
+    return in_array($role, $this->semuaRole(), true);
   }
 
   public function hasAnyRole($roles): bool
   {
-    return (bool) array_intersect((array) $roles, $this->roleLokal());
+    return (bool) array_intersect((array) $roles, $this->semuaRole());
   }
 
   public function isAdmin(): bool
