@@ -80,7 +80,10 @@
     {
       "name": "Laporan",
       "icon": "menu-icon tf-icons ti ti-report-analytics",
-      "slug": "operator.laporan",
+      "slug": [
+        "operator.laporan",
+        "operator.saldo-ukt"
+      ],
       "role": [
         "operator"
       ],
@@ -99,6 +102,11 @@
           "url": "operator/laporan/dispensasi",
           "name": "Dispensasi",
           "slug": "operator.laporan.dispensasi.index"
+        },
+        {
+          "url": "operator/saldo-ukt",
+          "name": "Saldo UKT",
+          "slug": "operator.saldo-ukt.index"
         }
       ]
     }

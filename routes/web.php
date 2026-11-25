@@ -8,6 +8,7 @@ use App\Http\Controllers\operator\LaporanTotalTagihanController;
 use App\Http\Controllers\operator\MatakuliahPraktikController;
 use App\Http\Controllers\operator\PaymentMuamalatController;
 use App\Http\Controllers\operator\PenerimaanYudisiumController;
+use App\Http\Controllers\operator\SaldoUktController;
 use App\Http\Controllers\operator\TagihanController;
 use App\Http\Controllers\operator\TagihanPmbController;
 use App\Http\Controllers\authentications\AuthController;
@@ -125,5 +126,22 @@ Route::middleware(['auth', 'role:operator'])
     Route::prefix('laporan/dispensasi')->name('laporan.dispensasi.')->controller(LaporanDispensasiController::class)->group(function () {
       Route::get('/', 'index')->name('index');
       Route::get('export', 'export')->name('export');
+    });
+  });
+
+// Saldo UKT untuk operator & pustik; URL & nama route tetap di area operator.
+Route::middleware(['auth', 'role:operator,pustik'])
+  ->prefix('operator')
+  ->name('operator.')
+  ->group(function () {
+    // Saldo UKT / beasiswa mahasiswa (port v1 /admin/saldoukt).
+    Route::prefix('saldo-ukt')->name('saldo-ukt.')->controller(SaldoUktController::class)->group(function () {
+      Route::get('/', 'index')->name('index');
+      Route::get('export', 'export')->name('export');
+      Route::get('mahasiswa', 'mahasiswa')->name('mahasiswa');
+      Route::get('mahasiswa/{idReg}', 'detail')->whereUuid('idReg')->name('detail');
+      Route::get('mahasiswa/{idReg}/export', 'exportRincian')->whereUuid('idReg')->name('detail.export');
+      Route::post('/', 'store')->name('store');
+      Route::delete('{id}', 'destroy')->whereNumber('id')->name('destroy');
     });
   });
