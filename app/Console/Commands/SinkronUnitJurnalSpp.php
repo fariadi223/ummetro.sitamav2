@@ -22,6 +22,7 @@ use RuntimeException;
  *   php artisan sitama:sinkron-unit-spp --smt=20251
  *   php artisan sitama:sinkron-unit-spp --smt=2025 --prodi=21401 --dry-run
  *   php artisan sitama:sinkron-unit-spp --smt=20251 --prodi=21401 --unit=12
+ *   php artisan sitama:sinkron-unit-spp --smt=20251 --dari=2025-09-01 --sampai=2025-09-30
  */
 class SinkronUnitJurnalSpp extends Command
 {
@@ -30,12 +31,17 @@ class SinkronUnitJurnalSpp extends Command
     {--prodi=* : Kode prodi (tbl_sms.kode_prodi, mis. 21401; boleh lebih dari satu). Kosong = semua prodi}
     {--unit= : Paksa id_uk SIMAKU (hanya bersama satu --prodi)}
     {--ma= : Batasi ke satu mata anggaran}
+    {--dari= : Tanggal mulai pembayaran (lunas_date), format YYYY-MM-DD}
+    {--sampai= : Tanggal akhir pembayaran (lunas_date, inklusif), format YYYY-MM-DD}
     {--force : Tetap kirim walau unit jurnal sudah sama}
     {--dry-run : Tampilkan rencana tanpa mengubah SIMAKU}';
 
   protected $description = 'Sinkron unit jurnal SIMAKU untuk rincian tagihan SPP lunas per tahun akademik & prodi';
 
   private array $hitung = ['diubah' => 0, 'sudah' => 0, 'belum_jurnal' => 0, 'gagal' => 0];
+
+  /** @var array{dari: ?string, sampai: ?string} rentang tanggal lunas */
+  private array $rentang = ['dari' => null, 'sampai' => null];
 
   public function __construct(private LaporanSppRepository $laporan, private SimakuService $simaku)
   {
@@ -49,6 +55,18 @@ class SinkronUnitJurnalSpp extends Command
       $this->error('--smt harus berformat YYYY atau YYYYS (S = 1/2).');
       return self::INVALID;
     }
+
+    $dari = $this->tanggal('dari');
+    $sampai = $this->tanggal('sampai');
+    if ($dari === false || $sampai === false) {
+      $this->error('--dari / --sampai harus berformat YYYY-MM-DD.');
+      return self::INVALID;
+    }
+    if ($dari !== null && $sampai !== null && $dari > $sampai) {
+      $this->error('--dari tidak boleh lebih besar dari --sampai.');
+      return self::INVALID;
+    }
+    $this->rentang = ['dari' => $dari, 'sampai' => $sampai];
 
     $prodi = $this->prodi();
     if ($prodi->isEmpty()) {
@@ -76,6 +94,10 @@ class SinkronUnitJurnalSpp extends Command
 
     if ($this->option('dry-run')) {
       $this->warn('DRY RUN: SIMAKU tidak diubah.');
+    }
+
+    if ($dari !== null || $sampai !== null) {
+      $this->info('Tanggal bayar: ' . ($dari ?? 'awal') . ' s.d. ' . ($sampai ?? 'akhir'));
     }
 
     foreach ($semester as $idSmt) {
@@ -111,6 +133,8 @@ class SinkronUnitJurnalSpp extends Command
       'id_sms' => $idSms,
       'status' => '1',
       'ma' => $this->option('ma'),
+      'dari' => $this->rentang['dari'],
+      'sampai' => $this->rentang['sampai'],
     ], fn ($v) => $v !== null))
       // bukti jurnal = bak_tagihan_dtl.id, key_bank = bak_tagihan.api_key.
       ->filter(fn ($r) => trim((string) $r->api_key) !== '')
@@ -171,6 +195,19 @@ class SinkronUnitJurnalSpp extends Command
     $this->hitung['gagal']++;
     $this->newLine();
     $this->error("  NPM {$npm} bukti {$bukti}: {$pesan}");
+  }
+
+  /** @return string|null|false tanggal Y-m-d, null bila kosong, false bila tidak valid */
+  private function tanggal(string $opsi): string|null|false
+  {
+    $nilai = trim((string) $this->option($opsi));
+    if ($nilai === '') {
+      return null;
+    }
+
+    $tgl = \DateTimeImmutable::createFromFormat('!Y-m-d', $nilai);
+
+    return $tgl && $tgl->format('Y-m-d') === $nilai ? $nilai : false;
   }
 
   /** @return string[]|null daftar id_smt */
