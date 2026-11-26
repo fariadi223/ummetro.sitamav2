@@ -105,6 +105,10 @@ Route::middleware(['auth', 'role:operator'])
       Route::get('export', 'export')->name('export');
       Route::get('kpp/{kppDtl}', 'detail')->whereNumber('kppDtl')->name('detail');
       Route::put('kpp/{kppDtl}/unit', 'sinkronUnit')->whereNumber('kppDtl')->name('sinkron-unit');
+      Route::get('sinkron-jurnal', 'rencanaSinkronJurnal')->name('sinkron-jurnal.rencana');
+      Route::post('sinkron-jurnal', 'sinkronJurnal')->name('sinkron-jurnal');
+      Route::get('sinkron-jurnal/log', 'logSinkronJurnal')->name('sinkron-jurnal.log');
+      Route::get('sinkron-jurnal/log/{log}', 'detailLogSinkronJurnal')->whereNumber('log')->name('sinkron-jurnal.log.detail');
     });
 
     // Laporan total tagihan per mahasiswa (port v1 /report/total_tagihan).

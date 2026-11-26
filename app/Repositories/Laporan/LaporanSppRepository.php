@@ -131,7 +131,7 @@ class LaporanSppRepository
       ->orderByRaw('td.id IS NULL')
       ->first([
         'k.thn_smt', 'k.smt_mhs', 'k.angsur_ke', 'k.create_date', 'b.nm_bank',
-        'm.nipd', 'm.nm_pd', 'm.mulai_smt', 's.jenjang_didik', 's.nm_lemb',
+        'm.nipd', 'm.nm_pd', 'm.mulai_smt', 's.id_sms', 's.jenjang_didik', 's.nm_lemb',
         'k.key_tagihan', 't.struk_id', 't.lunas_date', 'td.id AS id_rincian',
       ]);
 

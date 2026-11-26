@@ -11,6 +11,9 @@
     fn ($v) => $v !== null && $v !== ''
   ));
   $rp = fn ($n) => number_format((float) $n, 0, ',', '.');
+  // Sync jurnal SIMAKU butuh prodi (penentu unit) dan rentang tanggal lunas.
+  $bisaSinkron = !empty($filter['id_sms']) && !empty($filter['dari']) && !empty($filter['sampai']);
+  $filterSinkron = \Illuminate\Support\Arr::only($filter, ['id_smt', 'id_sms', 'angkatan', 'ma', 'npm', 'dari', 'sampai']);
 @endphp
 
 @section('vendor-style')
@@ -229,6 +232,103 @@
       });
     });
 
+    // Sync jurnal SIMAKU massal: rencana dulu, lalu diproses per batch.
+    var urlRencana = @json(route('operator.laporan.spp.sinkron-jurnal.rencana'));
+    var urlSinkronJurnal = @json(route('operator.laporan.spp.sinkron-jurnal'));
+    var filterSinkron = @json((object) $filterSinkron);
+    var $ms = $('#modalSinkronJurnal'), berjalan = false, batal = false;
+    var pesanMs = function (jenis, teks) {
+      $ms.find('.sj-pesan').attr('class', 'sj-pesan alert alert-' + jenis + ' small mb-0 mt-3').toggleClass('d-none', !teks).text(teks || '');
+    };
+    var galatXhr = function (xhr, cadangan) {
+      var j = xhr.responseJSON || {};
+      return j.errors ? $.map(j.errors, function (v) { return v; }).join(' ') : (j.message || cadangan);
+    };
+
+    $('#btn-sinkron-jurnal').on('click', function () {
+      $ms.find('.sj-rencana, .sj-progres').addClass('d-none');
+      $ms.find('.sj-muat').removeClass('d-none');
+      $ms.find('.sj-galat').empty().addClass('d-none');
+      $('#sj-mulai').prop('disabled', true).removeClass('d-none');
+      pesanMs('info', '');
+      bootstrap.Modal.getOrCreateInstance($ms[0]).show();
+
+      $.getJSON(urlRencana, filterSinkron).done(function (d) {
+        $ms.find('.sj-info').html(
+          '<dt>Tahun akademik</dt><dd>' + esc(d.semester) + '</dd>' +
+          '<dt>Program studi</dt><dd>' + esc(d.prodi) + '</dd>' +
+          '<dt>Rentang</dt><dd>' + esc(d.rentang) + '</dd>' +
+          '<dt>Rincian lunas</dt><dd>' + rp(d.total) + '</dd>' +
+          '<dt>Unit SIMAKU</dt><dd>' + esc(d.unit.kode + ' — ' + d.unit.nama) + ' <small class="text-muted">(id_uk ' + esc(d.unit.id_unit) + ')</small></dd>');
+        $ms.data('total', d.total);
+        $('#sj-mulai').prop('disabled', !d.total);
+        if (!d.total) pesanMs('warning', 'Tidak ada rincian lunas untuk filter ini.');
+        $ms.find('.sj-rencana').removeClass('d-none');
+      }).fail(function (xhr) {
+        pesanMs('danger', galatXhr(xhr, 'Rencana sinkron gagal dimuat.'));
+      }).always(function () {
+        $ms.find('.sj-muat').addClass('d-none');
+      });
+    });
+
+    $('#sj-mulai').on('click', function () {
+      var total = $ms.data('total') || 0;
+      var jumlah = { diubah: 0, sudah: 0, belum_jurnal: 0, gagal: 0 };
+      var logId = null;
+      var $bar = $ms.find('.sj-bar');
+      var tampil = function (offset) {
+        var persen = total ? Math.round(offset / total * 100) : 100;
+        $bar.css('width', persen + '%').text(persen + '%');
+        $ms.find('.sj-hitung').text(rp(offset) + ' / ' + rp(total) + ' rincian');
+        $.each(jumlah, function (k, v) { $ms.find('[data-sj="' + k + '"]').text(rp(v)); });
+      };
+      var selesai = function (jenis, teks) {
+        berjalan = false;
+        $bar.removeClass('progress-bar-animated progress-bar-striped');
+        $ms.find('[data-bs-dismiss]').prop('disabled', false);
+        $('#sj-henti').addClass('d-none');
+        pesanMs(jenis, teks);
+      };
+      var langkah = function (offset) {
+        if (batal) { selesai('warning', 'Dihentikan pada rincian ke-' + rp(offset) + '.'); return; }
+        $.ajax({
+          url: urlSinkronJurnal, method: 'POST', dataType: 'json',
+          headers: { 'X-CSRF-TOKEN': csrf, Accept: 'application/json' },
+          data: $.extend({ offset: offset, log_id: logId }, filterSinkron),
+        }).done(function (d) {
+          total = d.total;
+          logId = d.log_id;
+          $.each(d.hitung, function (k, v) { jumlah[k] += v; });
+          if (d.galat.length) {
+            $ms.find('.sj-galat').removeClass('d-none').append($.map(d.galat, function (g) { return '<li>' + esc(g) + '</li>'; }).join(''));
+          }
+          tampil(d.offset);
+          if (d.selesai) {
+            selesai(jumlah.gagal ? 'warning' : 'success',
+              'Selesai: ' + rp(jumlah.diubah) + ' diubah, ' + rp(jumlah.sudah) + ' sudah sesuai, ' +
+              rp(jumlah.belum_jurnal) + ' belum terjurnal' + (jumlah.gagal ? ', ' + rp(jumlah.gagal) + ' gagal.' : '.'));
+          } else {
+            langkah(d.offset);
+          }
+        }).fail(function (xhr) {
+          selesai('danger', galatXhr(xhr, 'Sinkron gagal.') + ' Berhenti pada rincian ke-' + rp(offset) + '.');
+        });
+      };
+
+      berjalan = true; batal = false;
+      $(this).addClass('d-none');
+      $('#sj-henti').removeClass('d-none').prop('disabled', false);
+      $ms.find('[data-bs-dismiss]').prop('disabled', true);
+      $ms.find('.sj-progres').removeClass('d-none');
+      $bar.addClass('progress-bar-animated progress-bar-striped');
+      pesanMs('info', '');
+      tampil(0);
+      langkah(0);
+    });
+
+    $('#sj-henti').on('click', function () { batal = true; $(this).prop('disabled', true); });
+    $ms.on('hide.bs.modal', function (e) { if (berjalan) e.preventDefault(); });
+
     $('#btn-export').on('click', function () {
       var q = $('#filter-spp').serialize();
       location.href = @json(route('operator.laporan.spp.export')) + (q ? '?' + q : '');
@@ -367,6 +467,11 @@
         <button type="button" id="btn-export" class="btn btn-success">
           <i class="ti ti-file-spreadsheet ti-xs me-1"></i>Excel
         </button>
+        <span class="d-inline-block" tabindex="0" @unless ($bisaSinkron) data-bs-toggle="tooltip" title="Pilih program studi dan tanggal lunas (mulai s.d. akhir) dulu" @endunless>
+          <button type="button" id="btn-sinkron-jurnal" class="btn btn-primary text-nowrap" @disabled(!$bisaSinkron)>
+            <i class="ti ti-refresh ti-xs me-1"></i>Sync jurnal SIMAKU
+          </button>
+        </span>
       </div>
     </form>
   </div>
@@ -538,6 +643,53 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Tutup</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{-- Modal sync jurnal SIMAKU massal (unit jurnal sesuai prodi) --}}
+<div class="modal fade" id="modalSinkronJurnal" tabindex="-1" aria-labelledby="modalSinkronJurnalLabel" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalSinkronJurnalLabel">Sync jurnal SIMAKU</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body">
+        <div class="sj-muat text-center text-muted py-4">
+          <div class="spinner-border spinner-border-sm me-2" role="status"></div>Menghitung rincian…
+        </div>
+        <div class="sj-rencana d-none">
+          <p class="small text-muted mb-2">Unit jurnal (id_uk / kodeunit) semua rincian lunas berikut akan disamakan dengan unit prodi di SIMAKU.</p>
+          <dl class="ls-dl sj-info"></dl>
+        </div>
+        <div class="sj-progres d-none mt-3">
+          <div class="d-flex justify-content-between small mb-1">
+            <span>Progres</span><span class="sj-hitung text-muted"></span>
+          </div>
+          <div class="progress" style="height: 1rem;">
+            <div class="progress-bar sj-bar" role="progressbar" style="width: 0%"></div>
+          </div>
+          <div class="row g-2 text-center small mt-2">
+            <div class="col-3"><strong class="d-block text-primary" data-sj="diubah">0</strong>Diubah</div>
+            <div class="col-3"><strong class="d-block text-success" data-sj="sudah">0</strong>Sudah sesuai</div>
+            <div class="col-3"><strong class="d-block text-warning" data-sj="belum_jurnal">0</strong>Belum jurnal</div>
+            <div class="col-3"><strong class="d-block text-danger" data-sj="gagal">0</strong>Gagal</div>
+          </div>
+          <ul class="sj-galat small text-danger mt-2 mb-0 ps-3 d-none" style="max-height: 10rem; overflow-y: auto;"></ul>
+        </div>
+        <div class="sj-pesan d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <a href="{{ route('operator.laporan.spp.sinkron-jurnal.log', \Illuminate\Support\Arr::only($filter, ['id_smt', 'id_sms'])) }}" class="btn btn-label-info me-auto" target="_blank">
+          <i class="ti ti-history ti-xs me-1"></i>Riwayat
+        </a>
+        <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Tutup</button>
+        <button type="button" id="sj-henti" class="btn btn-label-danger d-none">Hentikan</button>
+        <button type="button" id="sj-mulai" class="btn btn-primary" disabled>
+          <i class="ti ti-player-play ti-xs me-1"></i>Mulai sync
+        </button>
       </div>
     </div>
   </div>

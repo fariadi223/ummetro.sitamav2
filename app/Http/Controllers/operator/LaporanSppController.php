@@ -5,13 +5,16 @@ namespace App\Http\Controllers\operator;
 use App\Exports\LaporanSppExport;
 use App\Http\Controllers\Controller;
 use App\Repositories\Laporan\LaporanSppRepository;
+use App\Repositories\Laporan\SinkronJurnalLogRepository;
 use App\Repositories\Mak\BiayaRepository;
 use App\Services\SimakuService;
+use App\Services\SinkronUnitJurnalService;
 use App\Support\UnitProdi;
 use App\Support\TahunAkademik;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 use RuntimeException;
 use Maatwebsite\Excel\Facades\Excel;
@@ -24,6 +27,8 @@ class LaporanSppController extends Controller
     private LaporanSppRepository $laporan,
     private BiayaRepository $biaya,
     private SimakuService $simaku,
+    private SinkronUnitJurnalService $sinkron,
+    private SinkronJurnalLogRepository $log,
   )
   {
   }
@@ -67,18 +72,199 @@ class LaporanSppController extends Controller
       return response()->json(['message' => 'Unit tidak dikenal di SIMAKU.'], 422);
     }
 
+    $k = $this->laporan->detailKpp($kppDtl)->induk ?? null;
+    $kunci = trim((string) ($k->key_tagihan ?? ''));
+    $bukti = (string) $jurnal['bukti'];
+    $target = collect($data['unit']['pilihan'])->firstWhere('id_unit', $idUk);
+    $logId = $this->log->mulai([
+      'sumber' => 'manual',
+      'id_smt' => $k ? trim((string) $k->thn_smt) : null,
+      'id_sms' => $k->id_sms ?? null,
+      'prodi' => $data['prodi'],
+      'filter' => ['kpp_dtl' => $kppDtl],
+      'id_uk' => $idUk,
+      'unit_kode' => $target['kode'] ?? null,
+      'unit_nama' => $target['nama'] ?? null,
+      'force' => true,
+      'total' => 1,
+    ] + $this->operator());
+    $detail = [
+      'npm' => $data['npm'],
+      'key_bank' => $kunci,
+      'bukti' => $bukti,
+      'id_uk_lama' => collect($jurnal['baris'])->pluck('id_uk')->unique()->sort()->implode(','),
+    ];
+
     try {
-      $kunci = trim((string) ($this->laporan->detailKpp($kppDtl)->induk->key_tagihan ?? ''));
-      $hasil = $this->simaku->ubahUnitJurnal($kunci, (string) $jurnal['bukti'], $idUk);
+      $hasil = $this->simaku->ubahUnitJurnal($kunci, $bukti, $idUk);
     } catch (RuntimeException $e) {
+      $this->log->tambahHasil($logId, ['gagal' => 1], [$detail + ['hasil' => 'gagal', 'baris' => null, 'pesan' => $e->getMessage()]]);
+      $this->log->selesai($logId);
+
       return response()->json(['message' => $e->getMessage()], 502);
     }
+
+    $this->log->tambahHasil($logId, ['diubah' => 1], [$detail + ['hasil' => 'diubah', 'baris' => (int) ($hasil['diubah'] ?? 0), 'pesan' => null]]);
+    $this->log->selesai($logId);
 
     $baru = $this->dataDetail($kppDtl);
     $baru['message'] = 'Unit jurnal diperbarui ke ' . ($hasil['unit'] ?? 'unit terpilih')
       . ' (kodeunit ' . ($hasil['kodeunit'] ?? '-') . ', ' . (int) ($hasil['diubah'] ?? 0) . ' baris).';
 
     return response()->json($baru);
+  }
+
+  /** Jumlah rincian per permintaan sinkron massal (tiap rincian 1–2 panggilan SIMAKU). */
+  private const BATCH_SINKRON = 20;
+
+  /**
+   * Rencana sinkron massal unit jurnal untuk filter aktif: jumlah rincian
+   * lunas dan unit SIMAKU tujuan (dicocokkan dari nama prodi).
+   */
+  public function rencanaSinkronJurnal(Request $request): JsonResponse
+  {
+    [$filter, $prodi, $unit] = $this->siapSinkron($request);
+
+    return response()->json([
+      'total' => $this->sinkron->rincian($filter)->count(),
+      'prodi' => trim($prodi->jenjang_didik) . ' ' . trim($prodi->nm_lemb),
+      'semester' => TahunAkademik::nama($filter['id_smt']),
+      'rentang' => trim($this->labelRentang($filter), ' ·'),
+      'unit' => Arr::only($unit, ['id_unit', 'kode', 'nama']),
+    ]);
+  }
+
+  /**
+   * Sinkron massal unit jurnal SIMAKU (versi web command sitama:sinkron-unit-spp),
+   * satu batch per permintaan mulai dari `offset`; halaman memanggil berulang
+   * sampai `selesai`.
+   */
+  public function sinkronJurnal(Request $request): JsonResponse
+  {
+    $v = $request->validate([
+      'offset' => ['required', 'integer', 'min:0'],
+      'log_id' => ['nullable', 'integer'],
+    ]);
+    $offset = (int) $v['offset'];
+    [$filter, $prodi, $unit] = $this->siapSinkron($request);
+
+    $rincian = $this->sinkron->rincian($filter);
+    $batch = $rincian->slice($offset, self::BATCH_SINKRON);
+    $idUk = (int) $unit['id_unit'];
+
+    // Batch pertama membuka log baru; batch berikutnya melanjutkan log yang sama.
+    $logId = $this->logSinkron($v['log_id'] ?? null, $offset, fn () => [
+      'sumber' => 'web',
+      'id_smt' => $filter['id_smt'],
+      'id_sms' => $filter['id_sms'],
+      'prodi' => trim($prodi->jenjang_didik) . ' ' . trim($prodi->nm_lemb),
+      'filter' => Arr::except($filter, ['id_smt', 'id_sms']),
+      'id_uk' => $idUk,
+      'unit_kode' => $unit['kode'] ?? null,
+      'unit_nama' => $unit['nama'] ?? null,
+      'total' => $rincian->count(),
+    ]);
+
+    $hasil = $this->sinkron->proses($logId, $batch, $idUk);
+    $berikut = $offset + $batch->count();
+    $selesai = $berikut >= $rincian->count();
+
+    if ($selesai) {
+      $this->log->selesai($logId);
+    }
+
+    return response()->json([
+      'log_id' => $logId,
+      'total' => $rincian->count(),
+      'offset' => $berikut,
+      'selesai' => $selesai,
+      'hitung' => $hasil['hitung'],
+      'galat' => $hasil['galat'],
+    ]);
+  }
+
+  /**
+   * Id log sinkron web: buka baru bila offset 0, selain itu pakai log_id
+   * milik operator yang sama dan belum selesai.
+   */
+  private function logSinkron(?int $logId, int $offset, callable $data): int
+  {
+    if ($offset === 0 || !$logId) {
+      return $this->log->mulai($data() + $this->operator());
+    }
+
+    $log = $this->log->cari($logId);
+    abort_if(!$log || $log->selesai_at || (string) $log->user_id !== (string) Auth::id(), 422, 'Log sinkron tidak valid, ulangi sync dari awal.');
+
+    return $logId;
+  }
+
+  /** @return array{user_id: ?string, user_nama: ?string} */
+  private function operator(): array
+  {
+    $user = Auth::user();
+
+    return ['user_id' => $user ? (string) Auth::id() : null, 'user_nama' => $user->name ?? null];
+  }
+
+  /** Riwayat sinkron unit jurnal SIMAKU. */
+  public function logSinkronJurnal(Request $request): View
+  {
+    $f = $request->validate([
+      'id_smt' => ['nullable', 'regex:/^\d{4}[12]$/'],
+      'id_sms' => ['nullable', 'uuid'],
+      'sumber' => ['nullable', 'in:' . implode(',', array_keys(SinkronJurnalLogRepository::SUMBER))],
+    ]);
+
+    return view('content.operator.laporan.spp-sinkron-log', [
+      'data' => $this->log->daftar($f),
+      'filter' => $f,
+      'semester' => TahunAkademik::pilihan((int) date('Y') + 1),
+      'prodi' => $this->laporan->pilihanProdi(),
+    ]);
+  }
+
+  /** Detail per bukti satu log sinkron (JSON). */
+  public function detailLogSinkronJurnal(Request $request, int $log): JsonResponse
+  {
+    $hasil = $request->validate(['hasil' => ['nullable', 'in:' . implode(',', array_keys(SinkronJurnalLogRepository::HASIL))]])['hasil'] ?? null;
+    abort_if(!$this->log->cari($log), 404, 'Log tidak ditemukan.');
+
+    return response()->json($this->log->detail($log, $hasil));
+  }
+
+  /**
+   * Filter wajib untuk sinkron massal: prodi dan rentang tanggal lunas.
+   *
+   * @return array{0: array, 1: object, 2: array} filter, prodi, unit SIMAKU tujuan
+   */
+  private function siapSinkron(Request $request): array
+  {
+    $filter = $this->filter($request);
+    $request->validate([
+      'id_sms' => ['required'],
+      'dari' => ['required'],
+      'sampai' => ['required'],
+    ], [
+      'id_sms.required' => 'Pilih program studi dulu.',
+      'dari.required' => 'Isi tanggal lunas mulai.',
+      'sampai.required' => 'Isi tanggal lunas akhir.',
+    ]);
+
+    $prodi = $this->laporan->pilihanProdi()->firstWhere('id_sms', $filter['id_sms']);
+    abort_if(!$prodi, 422, 'Program studi tidak ditemukan.');
+
+    try {
+      $unit = UnitProdi::cocokkan($this->simaku->unit(), (string) $prodi->jenjang_didik, (string) $prodi->nm_lemb);
+    } catch (RuntimeException $e) {
+      abort(502, 'Daftar unit SIMAKU tidak dapat diambil: ' . $e->getMessage());
+    }
+    abort_if(!$unit, 422, 'Unit SIMAKU yang cocok dengan prodi ini tidak ditemukan. Gunakan command sitama:sinkron-unit-spp --unit=…');
+
+    // Laporan bisa difilter "Belum lunas", tetapi yang disinkron selalu rincian lunas.
+    unset($filter['status'], $filter['limit']);
+
+    return [$filter, $prodi, $unit];
   }
 
   private function dataDetail(int $kppDtl): array

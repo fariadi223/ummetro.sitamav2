@@ -2,8 +2,9 @@
 
 namespace App\Console\Commands;
 
-use App\Repositories\Laporan\LaporanSppRepository;
+use App\Repositories\Laporan\SinkronJurnalLogRepository;
 use App\Services\SimakuService;
+use App\Services\SinkronUnitJurnalService;
 use App\Support\TahunAkademik;
 use App\Support\UnitProdi;
 use Illuminate\Console\Command;
@@ -43,7 +44,11 @@ class SinkronUnitJurnalSpp extends Command
   /** @var array{dari: ?string, sampai: ?string} rentang tanggal lunas */
   private array $rentang = ['dari' => null, 'sampai' => null];
 
-  public function __construct(private LaporanSppRepository $laporan, private SimakuService $simaku)
+  public function __construct(
+    private SinkronUnitJurnalService $sinkron,
+    private SimakuService $simaku,
+    private SinkronJurnalLogRepository $log,
+  )
   {
     parent::__construct();
   }
@@ -127,74 +132,58 @@ class SinkronUnitJurnalSpp extends Command
 
   private function sinkronProdi(string $idSmt, string $idSms, string $label, array $target): void
   {
-    // Rincian lunas saja: jurnal SPM baru ada setelah pembayaran.
-    $rincian = $this->laporan->semua(array_filter([
-      'id_smt' => $idSmt,
-      'id_sms' => $idSms,
-      'status' => '1',
+    $filter = [
       'ma' => $this->option('ma'),
       'dari' => $this->rentang['dari'],
       'sampai' => $this->rentang['sampai'],
-    ], fn ($v) => $v !== null))
-      // bukti jurnal = bak_tagihan_dtl.id, key_bank = bak_tagihan.api_key.
-      ->filter(fn ($r) => trim((string) $r->api_key) !== '')
-      ->unique(fn ($r) => trim($r->api_key) . '|' . $r->id)
-      ->values();
+    ];
+    $rincian = $this->sinkron->rincian(['id_smt' => $idSmt, 'id_sms' => $idSms] + $filter);
 
     if ($rincian->isEmpty()) {
       return;
     }
 
     $idUk = (int) $target['id_unit'];
+    $force = (bool) $this->option('force');
+    $dryRun = (bool) $this->option('dry-run');
     $this->line("[{$label}] {$rincian->count()} rincian -> {$target['nama']} (id_uk {$idUk})");
+
+    $logId = $this->log->mulai([
+      'sumber' => 'command',
+      'user_nama' => get_current_user() ?: null,
+      'id_smt' => $idSmt,
+      'id_sms' => $idSms,
+      'prodi' => $label,
+      'filter' => $filter,
+      'id_uk' => $idUk,
+      'unit_kode' => $target['kode'] ?? null,
+      'unit_nama' => $target['nama'] ?? null,
+      'dry_run' => $dryRun,
+      'force' => $force,
+      'total' => $rincian->count(),
+    ]);
+
     $bar = $this->output->createProgressBar($rincian->count());
 
-    foreach ($rincian as $r) {
-      $this->sinkronRincian(trim($r->api_key), (string) $r->id, $idUk, trim($r->nipd));
-      $bar->advance();
+    // Dicatat ke log per potongan agar proses panjang yang terputus tetap meninggalkan jejak.
+    foreach ($rincian->chunk(50) as $potong) {
+      $hasil = $this->sinkron->proses($logId, $potong, $idUk, $force, $dryRun, function (string $h, object $r, ?string $pesan) use ($bar) {
+        if ($pesan !== null) {
+          $this->newLine();
+          $this->error('  NPM ' . trim($r->nipd) . " bukti {$r->id}: {$pesan}");
+        }
+        $bar->advance();
+      });
+
+      foreach ($hasil['hitung'] as $k => $n) {
+        $this->hitung[$k] += $n;
+      }
     }
 
+    $this->log->selesai($logId);
     $bar->finish();
     $this->newLine();
-  }
-
-  private function sinkronRincian(string $kunci, string $bukti, int $idUk, string $npm): void
-  {
-    try {
-      $baris = $this->simaku->jurnalSpm(['key_bank' => $kunci, 'bukti' => $bukti]);
-    } catch (RuntimeException $e) {
-      $this->catatGagal($npm, $bukti, $e->getMessage());
-      return;
-    }
-
-    if ($baris->isEmpty()) {
-      $this->hitung['belum_jurnal']++;
-      return;
-    }
-
-    if (!$this->option('force') && $baris->every(fn ($b) => (int) ($b->id_uk ?? 0) === $idUk)) {
-      $this->hitung['sudah']++;
-      return;
-    }
-
-    if ($this->option('dry-run')) {
-      $this->hitung['diubah']++;
-      return;
-    }
-
-    try {
-      $this->simaku->ubahUnitJurnal($kunci, $bukti, $idUk);
-      $this->hitung['diubah']++;
-    } catch (RuntimeException $e) {
-      $this->catatGagal($npm, $bukti, $e->getMessage());
-    }
-  }
-
-  private function catatGagal(string $npm, string $bukti, string $pesan): void
-  {
-    $this->hitung['gagal']++;
-    $this->newLine();
-    $this->error("  NPM {$npm} bukti {$bukti}: {$pesan}");
+    $this->line("  log #{$logId}");
   }
 
   /** @return string|null|false tanggal Y-m-d, null bila kosong, false bila tidak valid */
